@@ -1,0 +1,176 @@
+#! /bin/sh
+# Wrapper script for omxplayer. Adds aspect ratio border calculation and
+# optional multifile-playback support. Also displays the name of the last file
+# viewed, which helps choosing the next file when watching multiple episodes
+# of a show. The script also shows the expanded basename, providing more
+# information if shell wildcard arguments such as *S01E04* are used.
+#
+# Copyright (c) 2017 Guenther Brunthaler. All rights reserved.
+# 
+# This script is free software.
+# Distribution is permitted under the terms of the GPLv3.
+set -e
+
+fstoggle() {
+	wmctrl -r :ACTIVE: -b toggle,fullscreen
+}
+
+cleanup() {
+	local rc; rc=$?
+	$toggled && fstoggle
+	test $rc = 0 || echo "$0 failed!" >& 2
+}
+toggled=false
+trap cleanup 0
+
+ok=true
+test -t 0; test -t 1; test -t 2
+cmd=`
+       {
+	       cmd=omxplayer
+	       which $cmd \
+		       || echo "The (actual) $cmd is not installed!" >& 2
+       } | head -n 1
+`
+test -n "$cmd"; test -f "$cmd"; test -x "$cmd"
+dry_run=false
+single_file=true
+pthropt=
+aspect_x=
+delay=3
+repeat=1
+while :
+do
+	case $1 in
+		-m | --multifile | --multi-file | --multiple-files)
+			single_file=false;;
+		-D) delay=$2; shift;;
+		-d | --deinterlace \
+		| --nodeinterlace | --advanced \
+		| --nativedeinterlace \
+		| -i | --info | -s | --stats | -w | --hw \
+		| --loop )
+			pthropt="$pthropt $1"
+			;;
+		--aidx | -l | --pos | --amp |  --orientation | --fps \
+		| --win | --crop | --aspect-mode | --layout | --key-config \
+		| --dbus_name | --alpha | --layer | --display | --lavfdopts)
+			pthropt="$pthropt $1 $2"; shift
+			;;
+		--ar | --aspect-ratio)
+			aspect_x=${2%%/*}; aspect_y=${2##*/}
+			test x"$aspect_x/$aspect_y" = x"$2"
+			shift
+			;;
+		-r | --repeat | --loop) repeat=2;;
+		-n | --dry-run) dry_run=true;;
+		-t | --toggle | --toggle-fullscreen) fstoggle; exit;;
+		--) shift; break;;
+		*) break
+	esac
+	shift
+done
+if test -n "$aspect_x"
+then
+	if mediainfo=`which mediainfo` && xwininfo=`which xwininfo`
+	then
+		# For now, I don't care about detecting the actual screen
+		# dimensions and just hard-code them here.
+ 		wdim=`"$xwininfo" -root | awk '
+ 			$1 ~ /Width:/ {w= $2}
+ 			$1 ~ /Height:/ {h= $2}
+ 			END {print w "/" h}
+ 		'`
+		screen_w=${wdim%%/*}; screen_h=${wdim##*/}
+		test x"$screen_w/$screen_h" = x"$wdim"
+	else
+		echo "'mediainfo' utility or 'xwininfo' utility (often part of"
+		echo "a package 'x11-utils') is not installed."
+		echo "Ignoring --aspect-ratio option."
+		unset aspect_x
+	fi >& 2
+fi
+if
+	test $# -gt 1 \
+	&& expr x"$1" : x'[-+][[:digit:]]\{4\}$' > /dev/null
+then
+	vol=$1; shift
+else
+	vol=
+fi
+play() {
+	local mw mh o c
+	if test ! -f "$movie"
+	then
+		echo "*** NOT FOUND: File \"$movie\"." >& 2
+		ok=false
+		return
+	fi
+	set "$cmd" -b$pthropt
+	if test -n "$aspect_x"
+	then
+		# Get movie pixel sizes.
+		o=`"$mediainfo" --Inform="Video;%Width%/%Height%" "$movie"`
+		mw=${o%%/*}; mh=${o##*/}; test x"$mw/$mh" = x"$o"
+		# Adapt to requested aspect ratio.
+		mh=`expr $mh '*' $aspect_y / $aspect_x`
+		# Scale to full display width.
+		o=`expr $screen_w '*' $mh / $mw`
+		if test $o -le $screen_h
+		then
+			c=`expr '(' $screen_h - $o ')' / 2 || :`
+			c=0,$c,`expr $screen_w - 1`,`expr $c + $o - 1`
+		else
+			# Too high - scale to full display height instead.
+			o=`expr $screen_h '*' $mw / $mh`
+			c=`expr '(' $screen_w - $o ')' / 2 || :`
+			c=$c,0,`expr $c + $o - 1`,`expr $screen_h - 1`
+		fi
+		set "$@" --win "$c"
+	fi
+	$dry_run && set echo SIMULATION: "$@"
+	test -n "$vol" && set -- "$@" --vol "$vol"
+	set -- "$@" "$movie"
+	local mt='\(.*[^[:space:]]\)[[:space:]]\+(.*)[.][^.]*$'
+	mt=`expr x"$movie" : x"$mt"` || mt=${movie%.*}
+	printf 'Now playing: \033[32m%s\033[0m\n' "$mt" >& 2
+	sleep "$delay"
+	"$@" && c=0 || c=$?
+	printf 'Last file played was: \033[32m%s\033[0m\n' "$mt" >& 2
+	if test 3 = $c
+	then
+		repeat=0
+		return
+	fi
+	test $c -le 1 && return
+	echo "Command failed:" "$@" >& 2
+	false || exit
+}
+if test $# -gt 1 && $single_file
+then
+	echo "More than one file has been specified:"
+	echo
+	n=7; n=`expr $n + 1`
+	for movie
+	do
+		n=`expr $n - 1` || break
+		printf "'%s'\n" "$movie"
+	done
+	test $n = 0 && echo ...
+	echo
+	echo "but multi-file mode -m has not been specified!"
+	echo "Aborting!"
+	exit
+fi >& 2
+$dry_run || { fstoggle; toggled=true; }
+while :
+do
+	for movie
+	do
+		play
+		test 0 = $repeat && break
+	done
+	test 2 = $repeat && continue
+	break
+done
+$ok || exit
