@@ -38,6 +38,7 @@ single_file=true
 pthropt=
 aspect_x=
 delay=3
+initpos=
 repeat=1
 while :
 do
@@ -52,11 +53,12 @@ do
 		| --loop )
 			pthropt="$pthropt $1"
 			;;
-		--aidx | -l | --pos | --amp |  --orientation | --fps \
+		--aidx | -l | --amp |  --orientation | --fps \
 		| --win | --crop | --aspect-mode | --layout | --key-config \
 		| --dbus_name | --alpha | --layer | --display | --lavfdopts)
 			pthropt="$pthropt $1 $2"; shift
 			;;
+		--pos) initpos=" $1 $2"; shift;;
 		--ar | --aspect-ratio)
 			aspect_x=${2%%/*}; aspect_y=${2##*/}
 			test x"$aspect_x/$aspect_y" = x"$2"
@@ -106,7 +108,7 @@ play() {
 		ok=false
 		return
 	fi
-	set "$cmd" -b$pthropt
+	set "$cmd" -b$pthropt$initpos
 	if test -n "$aspect_x"
 	then
 		# Get movie pixel sizes.
@@ -168,6 +170,7 @@ do
 	for movie
 	do
 		play
+		initpos=
 		test 0 = $repeat && break
 	done
 	test 2 = $repeat && continue
