@@ -1,30 +1,120 @@
 #! /bin/sh
-# Wrapper script for omxplayer. Adds aspect ratio border calculation and
-# optional multifile-playback support. Also displays the name of the last file
-# viewed, which helps choosing the next file when watching multiple episodes
-# of a show. The script also shows the expanded basename, providing more
-# information if shell wildcard arguments such as *S01E04* are used.
-#
-# Copyright (c) 2017 Guenther Brunthaler. All rights reserved.
-# 
-# This script is free software.
-# Distribution is permitted under the terms of the GPLv3.
+exit_version() {
+	wr . <<- EOF; exit
+	$APP Version 2019.60
+	Copyright (c) 2017-2019 Guenther Brunthaler. All rights reserved.
+
+	This script is free software.
+	Distribution is permitted under the terms of the GPLv3.
+	EOF
+}
+APP=${0##*/}
+
+exit_help() {
+	wr <<- EOF; exit_version
+	$APP - wrapper script for omxplayer
+
+	$APP adds aspect ratio border calculation and optional
+	multifile-playback support. Also displays the name of the last file
+	viewed, which helps choosing the next file when watching multiple
+	episodes of a show. The script also shows the expanded basename,
+	providing more information if shell wildcard arguments such as
+	*S01E04* are used.
+
+	Usage: $APP [ <options> ] [ <volspec> ] [ <media_file_1> ...]
+
+	where
+
+	<media_file_1> the first of potentially multile multimedia files for
+	playback.
+
+	<volspec> is an optional volume playback specification in the format
+	+NNNN or -NNNN where N is a decimal digit.
+
+	If more than one media file is specified, the -m option is required.
+	This is a safeguard against shell wildcards intended to match a single
+	file actually matching multiple files.
+
+	Supported options:
+
+	-m, --multifile, --multi-file, --multiple-files: Allow multiple media
+	files to be specified as arguments, which will be played back in
+	order. Without this option, only a single media file is allowed as an
+	argument.
+
+	-D <delay>: The number of seconds to pause between playing back the
+	individual files during multiple-file playback.
+
+	-d, --deinterlace, --nodeinterlace, --advanced, --nativedeinterlace,
+	-i, --info, -s, --stats, -w, --hw, --loop: Options without arguments
+	which will be passed through directly to omxplayer.
+
+	--sid, --aidx, --amp, --orientation, --fps, --win, --crop,
+	--aspect-mode, --layout, --key-config, --dbus_name, --alpha, --layer,
+	--display, --lavfdopts: Options taking a single argument which will be
+	passed through directly to omxplayer.
+
+	-l <hh:mm:ss>: Time stamp into the media file where the playback of
+	every file should start.
+
+	--pos <hh:mm:ss>: Time stamp into the first file of a multi-file
+	sequence where playback should start. The remaining files, if any,
+	will be played back from the beginning.
+
+	--ar <x>/<y>, --aspect-ratio <x>/<y>: Override the aspect ration for
+	playback, e. g. "--ar 16/9" or "--ar 4/3".
+
+	-r, --repeat, --loop: Repeat the whole multimedia playback sequence
+	infinitely.
+
+	-n, --dry-run: Show which backend commands would be executed, but
+	don't actually execute them.
+
+	-t, --toggle, --toggle-fullscreen: Toggle the current terminal windows
+	between its normal size and full-screen. Useful if the script crashes
+	and failed to restore the original window size as a side effect.
+
+	--help, -h: Display this help text.
+
+	--version: Display version information.
+
+	EOF
+}
+
 set -e
+
+# Wrap stdin or arguments to $LINEWIDTH characters.
+# If $1 is ".", wrap only but do not fill paragraphs.
+wr() {
+	local S
+	S=
+	if test "$1" = .
+	then
+		S=-s; shift
+	fi
+	if test $# -gt 0
+	then
+		printf '%s\n' "$*" | wr
+	else
+		fmt $S -w $LINEWIDTH
+	fi
+}
+MAXWIDTH=100; test -t 1 && LINEWIDTH=`tput cols` || LINEWIDTH=
+test ${LINEWIDTH:=72} -gt $MAXWIDTH && LINEWIDTH=$MAXWIDTH; unset MAXWIDTH
 
 fstoggle() {
 	wmctrl -r :ACTIVE: -b toggle,fullscreen
 }
 
 cleanup() {
-	local rc; rc=$?
+	rc=$?
 	$toggled && fstoggle
-	test $rc = 0 || echo "$0 failed!" >& 2
+	test $rc = 0 || echo "\"$0\" failed!" >& 2
 }
 toggled=false
 trap cleanup 0
 
 ok=true
-test -t 0; test -t 1; test -t 2
 cmd=`
        {
 	       cmd=omxplayer
@@ -43,6 +133,8 @@ repeat=1
 while :
 do
 	case $1 in
+		-h | --help) exit_help;;
+		-V | --version) exit_version;;
 		-m | --multifile | --multi-file | --multiple-files)
 			single_file=false;;
 		-D) delay=$2; shift;;
@@ -53,7 +145,7 @@ do
 		| --loop )
 			pthropt="$pthropt $1"
 			;;
-		--aidx | -l | --amp |  --orientation | --fps \
+		--sid | --aidx | -l | --amp |  --orientation | --fps \
 		| --win | --crop | --aspect-mode | --layout | --key-config \
 		| --dbus_name | --alpha | --layer | --display | --lavfdopts)
 			pthropt="$pthropt $1 $2"; shift
@@ -72,6 +164,7 @@ do
 	esac
 	shift
 done
+test -t 0; test -t 1; test -t 2
 if test -n "$aspect_x"
 then
 	if mediainfo=`which mediainfo` && xwininfo=`which xwininfo`
